@@ -54,5 +54,13 @@ def test_markdown_links_and_indentation_are_preserved(make_passage):
     assert result.answer_markdown == "Voir [le guide](https://dgi.bj) [1] :\n  - point imbriqué [1]"
 
 
+def test_internal_labels_written_outside_brackets_become_source_numbers(make_passage):
+    passages = {"P1": make_passage(1), "P2": make_passage(2)}
+
+    result = verify_citations("Le taux est de 18 % [P2]. Le passage P2 provient d'une OCR ; P9 n'existe pas.", passages)
+
+    assert result.answer_markdown == "Le taux est de 18 % [1]. la source [1] provient d'une OCR ; P9 n'existe pas."
+
+
 def test_strip_citations_removes_every_reference():
     assert strip_citations("Précisez le régime [P1] [2].") == "Précisez le régime."

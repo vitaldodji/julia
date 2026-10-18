@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     retrieve_k: int = Field(default=30, ge=1, le=200)
     context_k: int = Field(default=8, ge=1, le=30)
-    min_relevance: float = Field(default=0.45, ge=0.0, le=1.0)
+    min_relevance: float = Field(default=0.52, ge=0.0, le=1.0)
     reference_year: int = 2026
     max_passage_chars: int = Field(default=6000, ge=500)
     embedding_max_tokens: int = Field(default=1024, ge=64, le=8192)
