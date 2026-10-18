@@ -312,6 +312,8 @@ a { color: inherit; }
 .answer-actions button { min-height: 31px; display: flex; align-items: center; gap: 6px; padding: 6px 9px; color: #738095; background: transparent; border: 0; border-radius: 8px; font-size: 10px; }
 .answer-actions button:hover { color: var(--blue); background: #f0f3fa; }
 .answer-actions span { flex: 1; }
+.history-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; max-height: 46vh; overflow-y: auto; }
+.history-empty { margin: 4px 10px; color: #69809b; font-size: 10px; }
 .answer-actions button[aria-pressed='true'] { color: var(--blue); background: #eef2fb; }
 .answer-actions button:disabled { cursor: default; }
 .answer-actions button:disabled:not([aria-pressed='true']) { opacity: .4; }

@@ -1,5 +1,6 @@
 import {
   FormEvent,
+  Fragment,
   KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useRef,
@@ -27,13 +28,16 @@ import {
 import ReactMarkdown from 'react-markdown'
 
 import { ApiRequestError } from '../api/client'
-import type {
-  AnswerResponse,
-  AnswerSource,
-  AskQuestion,
-  FeedbackRating,
-  SendFeedback,
-} from '../domain/answer'
+import type { AnswerSource, AskQuestion, FeedbackRating, SendFeedback } from '../domain/answer'
+import {
+  type Conversation,
+  type Exchange,
+  addExchange,
+  loadConversations,
+  newConversationId,
+  rateExchange,
+  saveConversations,
+} from '../history/conversations'
 import { Brand } from './Brand'
 
 interface ChatPageProps {
@@ -55,37 +59,49 @@ const sourceStatus = {
 } as const
 
 export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
+  const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations())
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [question, setQuestion] = useState('')
-  const [submittedQuestion, setSubmittedQuestion] = useState<string | null>(null)
-  const [answer, setAnswer] = useState<AnswerResponse | null>(null)
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null)
   const [selectedSource, setSelectedSource] = useState<AnswerSource | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [feedback, setFeedback] = useState<FeedbackRating | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const questionRef = useRef<HTMLTextAreaElement>(null)
+  const feedEndRef = useRef<HTMLDivElement>(null)
+
+  const exchanges = conversations.find((conversation) => conversation.id === activeId)?.exchanges ?? []
+  const isLoading = pendingQuestion !== null
 
   useEffect(() => questionRef.current?.focus(), [])
+  useEffect(() => saveConversations(conversations), [conversations])
+  useEffect(() => {
+    feedEndRef.current?.scrollIntoView?.({ block: 'end' })
+  }, [exchanges.length, pendingQuestion])
 
   async function submitQuestion(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault()
     const value = question.trim()
     if (value.length < 3 || isLoading) return
 
-    setIsLoading(true)
+    const conversationId = activeId ?? newConversationId()
+    setPendingQuestion(value)
     setError(null)
     setSelectedSource(null)
-    setCopied(false)
 
     try {
-      const response = await askQuestion({
+      const answer = await askQuestion({
         question: value,
         filters: { domain: 'fiscal', jurisdiction: 'BJ' },
       })
-      setSubmittedQuestion(value)
-      setAnswer(response)
-      setFeedback(null)
+      const exchange: Exchange = {
+        id: answer.requestId,
+        question: value,
+        answer,
+        askedAt: new Date().toISOString(),
+      }
+      setConversations((current) => addExchange(current, conversationId, exchange))
+      setActiveId(conversationId)
       setQuestion('')
     } catch (caught) {
       // Les erreurs de l'API (limite atteinte, service indisponible) portent un message lisible.
@@ -95,7 +111,7 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
           : 'Impossible de joindre le service juridique. Vérifiez votre connexion et réessayez.',
       )
     } finally {
-      setIsLoading(false)
+      setPendingQuestion(null)
     }
   }
 
@@ -117,29 +133,35 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
     return () => document.removeEventListener('keydown', closeSourceDrawer)
   }, [selectedSource])
 
-  function startNewChat() {
-    setSubmittedQuestion(null)
-    setAnswer(null)
+  function resetView() {
     setError(null)
     setSelectedSource(null)
-    setQuestion('')
-    setCopied(false)
-    setFeedback(null)
+    setCopiedId(null)
     setSidebarOpen(false)
+  }
+
+  function startNewChat() {
+    resetView()
+    setActiveId(null)
+    setQuestion('')
     requestAnimationFrame(() => questionRef.current?.focus())
   }
 
-  async function copyAnswer() {
-    if (!answer) return
-    await navigator.clipboard.writeText(answer.answerMarkdown)
-    setCopied(true)
+  function openConversation(conversationId: string) {
+    resetView()
+    setActiveId(conversationId)
   }
 
-  async function rateAnswer(rating: FeedbackRating) {
-    if (!answer || feedback) return
-    setFeedback(rating)
+  async function copyAnswer(exchange: Exchange) {
+    await navigator.clipboard.writeText(exchange.answer.answerMarkdown)
+    setCopiedId(exchange.id)
+  }
+
+  async function rateAnswer(exchange: Exchange, rating: FeedbackRating) {
+    if (exchange.rating) return
+    setConversations((current) => rateExchange(current, exchange.id, rating))
     try {
-      await sendFeedback?.({ requestId: answer.requestId, rating })
+      await sendFeedback?.({ requestId: exchange.answer.requestId, rating })
     } catch (caught) {
       // L'avis est facultatif : son échec ne doit pas gêner la lecture de la réponse.
       console.warn('Avis non enregistré', caught)
@@ -163,11 +185,22 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
           <span>Rechercher</span>
           <kbd>⌘ K</kbd>
         </div>
-        <div className="sidebar-label">Aujourd’hui</div>
-        <button className="history-item history-item--active" type="button">
-          <MessageSquareText size={16} />
-          <span>{submittedQuestion ?? 'Nouvelle recherche juridique'}</span>
-        </button>
+        <div className="sidebar-label">Historique</div>
+        <nav className="history-list" aria-label="Historique des conversations">
+          {conversations.length === 0 && <p className="history-empty">Vos recherches apparaîtront ici.</p>}
+          {conversations.map((conversation) => (
+            <button
+              key={conversation.id}
+              className={`history-item${conversation.id === activeId ? ' history-item--active' : ''}`}
+              type="button"
+              aria-current={conversation.id === activeId ? 'true' : undefined}
+              onClick={() => openConversation(conversation.id)}
+            >
+              <MessageSquareText size={16} />
+              <span>{conversation.title}</span>
+            </button>
+          ))}
+        </nav>
         <div className="chat-sidebar__spacer" />
         <div className="corpus-state">
           <div><CheckCircle2 size={17} /><strong>Corpus fiscal actif</strong></div>
@@ -195,7 +228,7 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
 
         <div className="chat-feed">
           <div className="chat-feed__inner">
-            {!submittedQuestion && !isLoading && !error && (
+            {exchanges.length === 0 && !isLoading && !error && (
               <section className="chat-welcome">
                 <div className="welcome-mark"><Scale size={28} /></div>
                 <span className="welcome-kicker">Assistant juridique Vitalia</span>
@@ -214,18 +247,32 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
               </section>
             )}
 
-            {submittedQuestion && (
-              <article className="user-message" aria-label="Votre question">
-                {submittedQuestion}
-              </article>
-            )}
+            {exchanges.map((exchange) => (
+              <Fragment key={exchange.id}>
+                <article className="user-message" aria-label="Votre question">
+                  {exchange.question}
+                </article>
+                <AnswerCard
+                  exchange={exchange}
+                  copied={copiedId === exchange.id}
+                  onCopy={() => void copyAnswer(exchange)}
+                  onRate={(rating) => void rateAnswer(exchange, rating)}
+                  onOpenSource={setSelectedSource}
+                />
+              </Fragment>
+            ))}
 
-            {isLoading && (
-              <div className="assistant-message assistant-message--loading" role="status">
-                <div className="assistant-message__identity"><span>J</span><strong>Julia recherche dans les textes</strong></div>
-                <div className="thinking-line"><i /><i /><i /></div>
-                <p>Analyse de la question et vérification des passages pertinents…</p>
-              </div>
+            {pendingQuestion && (
+              <>
+                <article className="user-message" aria-label="Votre question">
+                  {pendingQuestion}
+                </article>
+                <div className="assistant-message assistant-message--loading" role="status">
+                  <div className="assistant-message__identity"><span>J</span><strong>Julia recherche dans les textes</strong></div>
+                  <div className="thinking-line"><i /><i /><i /></div>
+                  <p>Analyse de la question et vérification des passages pertinents…</p>
+                </div>
+              </>
             )}
 
             {error && (
@@ -233,62 +280,7 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
                 <ShieldAlert size={20} /><div><strong>La recherche n’a pas abouti</strong><p>{error}</p></div>
               </div>
             )}
-
-            {answer && !isLoading && (
-              <article className="assistant-message" aria-label="Réponse de Julia">
-                <div className="assistant-message__identity"><span>J</span><div><strong>Julia</strong><small>Réponse fondée sur le corpus</small></div></div>
-                {answer.status === 'insufficient_sources' && (
-                  <div className="source-warning" role="status">
-                    <ShieldAlert size={18} />
-                    <span>Aucune source juridique suffisamment pertinente n’a été trouvée.</span>
-                  </div>
-                )}
-                <div className="answer-body"><ReactMarkdown>{answer.answerMarkdown}</ReactMarkdown></div>
-                {answer.sources.length > 0 && (
-                  <div className="sources-block">
-                    <div className="sources-block__title"><FileText size={16} /><strong>Sources citées</strong><span>{answer.sources.length}</span></div>
-                    <div className="sources-grid">
-                      {answer.sources.map((source) => (
-                        <button key={source.citationId} className="source-card" type="button" aria-label={`Source ${source.citationId}`} onClick={() => setSelectedSource(source)}>
-                          <span className="source-card__number">{source.citationId}</span>
-                          <span className="source-card__content">
-                            <strong>{source.title}</strong>
-                            <small>{[source.article && `Article ${source.article}`, source.page && `Page ${source.page}`, source.version].filter(Boolean).join(' · ')}</small>
-                          </span>
-                          <ChevronRight size={17} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="answer-actions">
-                  <button type="button" onClick={() => void copyAnswer()}>
-                    {copied ? <CheckCircle2 size={15} /> : <Copy size={15} />}
-                    {copied ? 'Copiée' : 'Copier'}
-                  </button>
-                  <span />
-                  {feedback && <small className="feedback-thanks">Merci pour votre avis</small>}
-                  <button
-                    type="button"
-                    aria-label="Réponse utile"
-                    aria-pressed={feedback === 'up'}
-                    disabled={feedback !== null}
-                    onClick={() => void rateAnswer('up')}
-                  >
-                    <ThumbsUp size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Réponse à améliorer"
-                    aria-pressed={feedback === 'down'}
-                    disabled={feedback !== null}
-                    onClick={() => void rateAnswer('down')}
-                  >
-                    <ThumbsDown size={15} />
-                  </button>
-                </div>
-              </article>
-            )}
+            <div ref={feedEndRef} />
           </div>
         </div>
 
@@ -301,7 +293,11 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleComposerKeyDown}
               rows={2}
-              placeholder="Posez votre question juridique…"
+              placeholder={
+                exchanges.length > 0
+                  ? 'Posez une autre question (rappelez l’impôt ou l’opération concernés)…'
+                  : 'Posez votre question juridique…'
+              }
               aria-label="Votre question juridique"
             />
             <div className="composer__bottom">
@@ -347,5 +343,73 @@ export function ChatPage({ askQuestion, sendFeedback, onBack }: ChatPageProps) {
         </>
       )}
     </div>
+  )
+}
+
+interface AnswerCardProps {
+  exchange: Exchange
+  copied: boolean
+  onCopy: () => void
+  onRate: (rating: FeedbackRating) => void
+  onOpenSource: (source: AnswerSource) => void
+}
+
+function AnswerCard({ exchange, copied, onCopy, onRate, onOpenSource }: AnswerCardProps) {
+  const { answer, rating } = exchange
+
+  return (
+    <article className="assistant-message" aria-label="Réponse de Julia">
+      <div className="assistant-message__identity"><span>J</span><div><strong>Julia</strong><small>Réponse fondée sur le corpus</small></div></div>
+      {answer.status === 'insufficient_sources' && (
+        <div className="source-warning" role="status">
+          <ShieldAlert size={18} />
+          <span>Aucune source juridique suffisamment pertinente n’a été trouvée.</span>
+        </div>
+      )}
+      <div className="answer-body"><ReactMarkdown>{answer.answerMarkdown}</ReactMarkdown></div>
+      {answer.sources.length > 0 && (
+        <div className="sources-block">
+          <div className="sources-block__title"><FileText size={16} /><strong>Sources citées</strong><span>{answer.sources.length}</span></div>
+          <div className="sources-grid">
+            {answer.sources.map((source) => (
+              <button key={source.citationId} className="source-card" type="button" aria-label={`Source ${source.citationId}`} onClick={() => onOpenSource(source)}>
+                <span className="source-card__number">{source.citationId}</span>
+                <span className="source-card__content">
+                  <strong>{source.title}</strong>
+                  <small>{[source.article && `Article ${source.article}`, source.page && `Page ${source.page}`, source.version].filter(Boolean).join(' · ')}</small>
+                </span>
+                <ChevronRight size={17} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="answer-actions">
+        <button type="button" onClick={onCopy}>
+          {copied ? <CheckCircle2 size={15} /> : <Copy size={15} />}
+          {copied ? 'Copiée' : 'Copier'}
+        </button>
+        <span />
+        {rating && <small className="feedback-thanks">Merci pour votre avis</small>}
+        <button
+          type="button"
+          aria-label="Réponse utile"
+          aria-pressed={rating === 'up'}
+          disabled={rating !== undefined}
+          onClick={() => onRate('up')}
+        >
+          <ThumbsUp size={15} />
+        </button>
+        <button
+          type="button"
+          aria-label="Réponse à améliorer"
+          aria-pressed={rating === 'down'}
+          disabled={rating !== undefined}
+          onClick={() => onRate('down')}
+        >
+          <ThumbsDown size={15} />
+        </button>
+      </div>
+    </article>
   )
 }

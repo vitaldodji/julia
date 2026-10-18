@@ -48,7 +48,7 @@ export function getClientId(storage: Storage | null = defaultStorage()): string 
   } catch {
     // Stockage indisponible (navigation privée stricte) : l'identifiant reste en mémoire.
   }
-  memoryClientId ??= newClientId()
+  memoryClientId ??= randomId()
   try {
     storage?.setItem(CLIENT_ID_KEY, memoryClientId)
   } catch {
@@ -57,7 +57,7 @@ export function getClientId(storage: Storage | null = defaultStorage()): string 
   return memoryClientId
 }
 
-function newClientId(): string {
+export function randomId(): string {
   // randomUUID n'existe qu'en contexte sécurisé (HTTPS ou localhost).
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -65,10 +65,15 @@ function newClientId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
 }
 
-function defaultStorage(): Storage | null {
+/** localStorage, ou null quand le navigateur l'interdit (navigation privée stricte). */
+export function browserStorage(): Storage | null {
   try {
     return window.localStorage
   } catch {
     return null
   }
+}
+
+function defaultStorage(): Storage | null {
+  return browserStorage()
 }
