@@ -65,10 +65,30 @@ def test_answer_follows_the_contract(api):
 def test_question_without_relevant_source_is_refused(api):
     client, _ = api()
 
-    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Bonjour, comment allez-vous ?"}).json()
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Quelle est la recette du poulet braisé ?"}).json()
 
     assert body["status"] == "insufficient_sources"
     assert body["sources"] == []
+
+
+def test_a_greeting_gets_a_welcome_message(api):
+    client, _ = api()
+
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Bonjour"}).json()
+
+    assert body["status"] == "clarification_required"
+    assert "Je suis **Julia**" in body["answer_markdown"]
+    assert body["sources"] == []
+
+
+def test_a_cited_text_missing_from_the_corpus_is_named_in_the_refusal(api):
+    client, _ = api()
+
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Que prévoit la circulaire n°1260 ?"}).json()
+
+    assert body["status"] == "insufficient_sources"
+    assert "circulaire n°1260" in body["answer_markdown"]
+    assert "pas encore dans ma base documentaire" in body["answer_markdown"]
 
 
 @pytest.mark.parametrize(

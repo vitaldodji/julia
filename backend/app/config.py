@@ -29,7 +29,14 @@ class RerankerMode(StrEnum):
 
 class Settings(BaseSettings):
     # env_ignore_empty : « JULIA_LLM_API_KEY= » vaut « non renseignée », pas une clé vide.
-    model_config = SettingsConfigDict(env_prefix="JULIA_", env_file=".env", extra="ignore", env_ignore_empty=True)
+    # hide_input_in_errors : un refus de configuration ne doit jamais recopier les secrets dans les logs.
+    model_config = SettingsConfigDict(
+        env_prefix="JULIA_",
+        env_file=".env",
+        extra="ignore",
+        env_ignore_empty=True,
+        hide_input_in_errors=True,
+    )
 
     env: Environment = Environment.DEV
     engine: EngineMode = EngineMode.FAKE

@@ -5,8 +5,12 @@ Exemples :
     python -m backend.indexing --chunks "data/processed/chunks/*.jsonl"
     python -m backend.indexing --chunks "data/processed/chunks/*.jsonl" --prune
 
+    python -m backend.indexing --chunks legal_chunks.jsonl --only-mvp --cache-only   # calcul seul
+
 Sémantique : chaque document présent dans les JSONL est remplacé en entier ; les autres documents
-déjà indexés sont conservés, sauf avec `--prune`. Tout est écrit dans une seule transaction.
+déjà indexés sont conservés, sauf avec `--prune`. Les embeddings sont calculés avant toute connexion
+à la base et enregistrés au fur et à mesure dans un cache disque : une indexation interrompue reprend
+là où elle s'est arrêtée. L'écriture en base se fait ensuite dans une seule transaction.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import psycopg
 from pydantic import ValidationError
 
 from backend.db import EMBEDDING_DIMENSION
+from backend.indexing.embedding_cache import EmbeddingCache, embed_with_cache
 from backend.indexing.manifest import Manifest, load_manifest
 from backend.indexing.quality import QualityCheck, quality_report
 from backend.rag.interfaces import Embedder
@@ -34,6 +39,7 @@ from contracts import LegalChunk
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANIFEST = Path("data/metadata/corpus_manifest.yaml")
+DEFAULT_CACHE = Path("data/processed/embeddings-cache.sqlite")
 
 
 class IndexingError(ValueError):
@@ -101,6 +107,11 @@ def _plain(value: object) -> object:
     return value.value if isinstance(value, Enum) else value
 
 
+def select_mvp_chunks(chunks: Sequence[LegalChunk], manifest: Manifest) -> list[LegalChunk]:
+    """Chunks des documents du périmètre MVP (fiscalité du Bénin) : indexer d'abord ce qui sert."""
+    return [chunk for chunk in chunks if manifest.entries[chunk.document_id].in_mvp]
+
+
 def embedding_text(chunk: LegalChunk) -> str:
     """Texte vectorisé : le contenu précédé de son contexte (document, emplacement, article)."""
     header = " — ".join(
@@ -119,7 +130,22 @@ def index_corpus(
     *,
     corpus_version: str,
     prune: bool = False,
+    cache: EmbeddingCache | None = None,
 ) -> IndexReport:
+    vectors = compute_vectors(chunks, manifest, embedder, cache)
+    return write_corpus(
+        conn, chunks, manifest, vectors, embedder.model_name, corpus_version=corpus_version, prune=prune
+    )
+
+
+def compute_vectors(
+    chunks: Sequence[LegalChunk],
+    manifest: Manifest,
+    embedder: Embedder,
+    cache: EmbeddingCache | None = None,
+) -> list[list[float]]:
+    """Calcule les embeddings sans toucher à la base : un arrêt de PostgreSQL pendant ce long
+    calcul ne fait rien perdre, et le cache permet de reprendre une indexation interrompue."""
     if embedder.dimension != EMBEDDING_DIMENSION:
         raise IndexingError(
             [f"le modèle {embedder.model_name} produit {embedder.dimension} dimensions, la base en attend "
@@ -131,9 +157,24 @@ def index_corpus(
     if not chunks:
         raise IndexingError(["aucun chunk à indexer"])
 
+    texts = [embedding_text(chunk) for chunk in chunks]
+    if cache is not None:
+        return embed_with_cache(texts, embedder, cache)
     logger.info("Calcul de %d embeddings avec %s…", len(chunks), embedder.model_name)
-    vectors = embedder.embed_documents([embedding_text(chunk) for chunk in chunks])
+    return embedder.embed_documents(texts)
 
+
+def write_corpus(
+    conn: psycopg.Connection,
+    chunks: Sequence[LegalChunk],
+    manifest: Manifest,
+    vectors: Sequence[Sequence[float]],
+    model_name: str,
+    *,
+    corpus_version: str,
+    prune: bool = False,
+) -> IndexReport:
+    """Écrit documents, chunks et embeddings dans une seule transaction, courte."""
     first_chunk = {}
     for chunk in chunks:
         first_chunk.setdefault(chunk.document_id, chunk)
@@ -150,7 +191,7 @@ def index_corpus(
         cursor.executemany(
             "INSERT INTO chunk_embeddings (chunk_id, model, embedding) VALUES (%s, %s, %s)",
             [
-                (chunk.chunk_id, embedder.model_name, np.asarray(vector, dtype=np.float32))
+                (chunk.chunk_id, model_name, np.asarray(vector, dtype=np.float32))
                 for chunk, vector in zip(chunks, vectors, strict=True)
             ],
         )
@@ -160,7 +201,7 @@ def index_corpus(
         cursor.execute(
             "INSERT INTO corpus_versions (corpus_version, embedding_model, documents, chunks)"
             " VALUES (%s, %s, %s, %s)",
-            (corpus_version, embedder.model_name, total_documents, total_chunks),
+            (corpus_version, model_name, total_documents, total_chunks),
         )
     return IndexReport(corpus_version, len(document_ids), len(chunks), pruned)
 
@@ -257,6 +298,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--prune", action="store_true", help="supprimer les documents absents des JSONL")
     parser.add_argument("--dry-run", action="store_true", help="valider sans calculer ni écrire")
     parser.add_argument("--report", type=Path, help="écrire le rapport de qualité complet (JSON)")
+    parser.add_argument("--only-mvp", action="store_true", help="n'indexer que les documents du périmètre MVP")
+    parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE, help="cache disque des embeddings")
+    parser.add_argument(
+        "--cache-only", action="store_true", help="calculer les embeddings (dans le cache) sans écrire en base"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -274,8 +320,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.error("Fichiers non conformes au contrat LegalChunk — %s", error)
         return 1
 
-    documents = len({chunk.document_id for chunk in chunks})
     _log_quality(quality_report(chunks, manifest), args.report)
+    if args.only_mvp:
+        chunks = select_mvp_chunks(chunks, manifest)
+    documents = len({chunk.document_id for chunk in chunks})
     if args.dry_run:
         logger.info("Validation réussie : %d chunks, %d documents, %d fichiers.", len(chunks), documents, len(paths))
         return 0
@@ -286,17 +334,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     from pgvector.psycopg import register_vector
 
     settings = Settings()
-    if not settings.database_url:
+    if not settings.database_url and not args.cache_only:
         logger.error("JULIA_DATABASE_URL n'est pas défini.")
         return 1
-    migrate(settings.database_url)
+    if not args.cache_only:
+        migrate(settings.database_url)  # vérifie que la base répond avant un long calcul
     embedder = build_embedder(
         settings.embedding_model, device=settings.model_device, max_tokens=settings.embedding_max_tokens
     )
+    cache = EmbeddingCache(args.cache)
+    try:
+        vectors = compute_vectors(chunks, manifest, embedder, cache)
+    finally:
+        cache.close()
+    if args.cache_only:
+        logger.info("Embeddings calculés et mis en cache (%s) ; base non modifiée.", args.cache)
+        return 0
+
+    # Connexion ouverte seulement maintenant : l'écriture dure quelques secondes.
     with psycopg.connect(settings.database_url) as conn:
         register_vector(conn)
-        report = index_corpus(
-            conn, chunks, manifest, embedder, corpus_version=args.corpus_version, prune=args.prune
+        report = write_corpus(
+            conn, chunks, manifest, vectors, embedder.model_name,
+            corpus_version=args.corpus_version, prune=args.prune,
         )
     logger.info(
         "Corpus %s indexé : %d documents, %d chunks%s.",

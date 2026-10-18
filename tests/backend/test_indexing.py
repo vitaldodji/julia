@@ -10,8 +10,11 @@ from backend.indexing.index_corpus import (
     main,
     read_chunks,
 )
+from backend.indexing.embedding_cache import EmbeddingCache, embed_with_cache
+from backend.indexing.index_corpus import select_mvp_chunks
 from backend.indexing.manifest import load_manifest
 from backend.indexing.quality import quality_report
+from backend.rag.fake import HashingEmbedder
 from contracts import LegalChunk
 
 REAL_MANIFEST = Path(__file__).resolve().parents[2] / "data" / "metadata" / "corpus_manifest.yaml"
@@ -181,6 +184,69 @@ def test_clean_chunks_produce_no_quality_warning(manifest):
     clean_manifest = load_manifest_without("arrete-2020", manifest)
 
     assert quality_report(chunks, clean_manifest) == []
+
+
+class CountingEmbedder(HashingEmbedder):
+    def __init__(self):
+        super().__init__()
+        self.embedded = []
+
+    def embed_documents(self, texts):
+        self.embedded.extend(texts)
+        return super().embed_documents(texts)
+
+
+def test_embedding_cache_only_computes_new_texts(tmp_path):
+    cache = EmbeddingCache(tmp_path / "cache.sqlite")
+    embedder = CountingEmbedder()
+
+    first = embed_with_cache(["texte a", "texte b", "texte a"], embedder, cache, batch_size=2)
+    assert sorted(embedder.embedded) == ["texte a", "texte b"]
+
+    embedder.embedded.clear()
+    second = embed_with_cache(["texte a", "texte c"], embedder, cache)
+
+    assert embedder.embedded == ["texte c"]
+    assert second[0] == pytest.approx(first[0], abs=1e-6)
+    cache.close()
+
+
+def test_embedding_cache_survives_a_restart(tmp_path):
+    path = tmp_path / "cache.sqlite"
+    cache = EmbeddingCache(path)
+    embed_with_cache(["texte"], CountingEmbedder(), cache)
+    cache.close()
+
+    reopened, embedder = EmbeddingCache(path), CountingEmbedder()
+    embed_with_cache(["texte"], embedder, reopened)
+
+    assert embedder.embedded == []
+    reopened.close()
+
+
+def test_only_mvp_keeps_the_mvp_documents(manifest):
+    chunks = [
+        chunk(),
+        chunk(chunk_id="note-copie:1", document_id="note-copie", source_level=2, document_type="note_circulaire"),
+    ]
+
+    assert [c.document_id for c in select_mvp_chunks(chunks, manifest)] == ["cgi-2026"]
+
+
+def test_cache_only_computes_embeddings_without_a_database(tmp_path, manifest, monkeypatch):
+    chunks_path = tmp_path / "cgi.jsonl"
+    chunks_path.write_text(chunk().model_dump_json() + "\n", encoding="utf-8")
+    cache_path = tmp_path / "cache.sqlite"
+    monkeypatch.chdir(tmp_path)  # aucun .env local ne doit influencer le test
+    monkeypatch.setenv("JULIA_EMBEDDING_MODEL", "test/hashing")
+    monkeypatch.delenv("JULIA_DATABASE_URL", raising=False)
+
+    args = ["--chunks", str(chunks_path), "--manifest", str(tmp_path / "manifest.yaml")]
+    assert main([*args, "--cache-only", "--cache", str(cache_path)]) == 0
+
+    cache = EmbeddingCache(cache_path)
+    assert len(cache.get_many([EmbeddingCache.key("test/hashing", embedding_text(chunk()))])) == 1
+    cache.close()
 
 
 def load_manifest_without(document_id, manifest):

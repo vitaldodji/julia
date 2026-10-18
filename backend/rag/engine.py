@@ -20,6 +20,7 @@ from backend.rag.analyzer import analyze
 from backend.rag.citations import strip_citations, verify_citations
 from backend.rag.context import build_context, build_user_message
 from backend.rag.interfaces import LLMProvider, LLMUnavailableError, Reranker, Retriever
+from backend.rag.smalltalk import small_talk_reply
 from backend.rag.types import AnswerStatus, EngineResult, EngineTrace, Passage, SearchFilters
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class RagEngine:
 
     def answer(self, question: str, filters: SearchFilters) -> EngineResult:
         trace = EngineTrace()
+        reply = small_talk_reply(question)
+        if reply is not None:
+            # « Bonjour », « merci »… : accueil fixe, sans recherche ni LLM.
+            return EngineResult(AnswerStatus.CLARIFICATION_REQUIRED, reply, (), trace)
         query = analyze(question, self._settings.reference_year)
 
         with _timed(trace, "retrieve"):

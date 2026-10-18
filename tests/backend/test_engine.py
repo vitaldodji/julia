@@ -172,6 +172,16 @@ def test_extractive_mode_cites_the_best_passages_without_writing(make_passage):
     assert result.sources == tuple(passages[:3])
 
 
+def test_greetings_get_a_welcome_without_search_or_llm(make_passage):
+    engine, llm, retriever = build([make_passage(1)], [])
+
+    result = engine.answer("Bonjour", FILTERS)
+
+    assert result.status is AnswerStatus.CLARIFICATION_REQUIRED
+    assert "Je suis **Julia**" in result.answer_markdown
+    assert retriever.queries == [] and llm.calls == []
+
+
 def test_search_never_calls_the_llm(make_passage):
     engine, llm, _ = build([make_passage(1), make_passage(2)], [])
 

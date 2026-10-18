@@ -7,7 +7,8 @@ from pydantic import ValidationError
 
 from backend.app.config import Settings
 from backend.app.ratelimit import AnswerRateLimits, DailyBudget, RateLimited, SlidingWindowLimiter
-from backend.rag.analyzer import analyze
+from backend.rag.analyzer import analyze, missing_text_references, text_references
+from backend.rag.smalltalk import GREETING_REPLY, PRESENTATION, THANKS_REPLY, small_talk_reply
 from backend.rag.context import build_context
 from backend.rag.fake import InMemoryRetriever, ScriptedLLM
 from backend.rag.interfaces import LLMUnavailableError
@@ -56,6 +57,43 @@ def test_in_memory_retriever_honours_document_hints(make_passage):
 
     assert in_cgi[0].exact_match is True
     assert elsewhere == [] or elsewhere[0].exact_match is False
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Selon la circulaire n°1260 du 26 octobre 2021, quelles catégories ?", [("circulaire", "1260")]),
+        ("Que dit la note circulaire N° 1403 ?", [("note circulaire", "1403")]),
+        ("Arrêté 1283-C sur les amortissements", [("arrêté", "1283")]),
+        ("Que prévoit l'arrêté de 2020 ?", []),
+        ("Quel est le taux de la TVA ?", []),
+    ],
+)
+def test_text_references(question, expected):
+    assert text_references(question) == expected
+
+
+def test_missing_text_references_checks_the_indexed_documents():
+    indexed = ["2020-circulaire-n-864-extension-mecef Circulaire n°864", "benin-code-general-des-impots-2026"]
+
+    assert missing_text_references("Que dit la circulaire n°864 ?", indexed) == []
+    assert missing_text_references("Que dit la circulaire n°1260 ?", indexed) == [("circulaire", "1260")]
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Bonjour", GREETING_REPLY),
+        ("bonjour Julia !", GREETING_REPLY),
+        ("Bonsoir, comment allez-vous ?", GREETING_REPLY),
+        ("Merci beaucoup", THANKS_REPLY),
+        ("Qui es-tu ?", PRESENTATION),
+        ("Bonjour, quel est le taux de la TVA ?", None),
+        ("Quel est le taux de la TVA ?", None),
+    ],
+)
+def test_small_talk_is_recognised_without_hiding_real_questions(message, expected):
+    assert small_talk_reply(message) == expected
 
 
 def test_analyzer_includes_archives_for_past_years():
@@ -247,6 +285,15 @@ def test_fallback_llm_reports_every_failure():
 def test_production_refuses_an_incomplete_configuration():
     with pytest.raises(ValidationError, match="JULIA_ADMIN_TOKEN"):
         Settings(_env_file=None, env="prod", engine="postgres", database_url="postgresql://x", llm_api_key="k")
+
+
+def test_configuration_errors_never_reveal_secrets():
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None, env="prod", engine="postgres", database_url="postgresql://x",
+                 admin_token="jeton-ultra-secret", trace_salt="sel-ultra-secret")
+
+    assert "JULIA_LLM_API_KEY" in str(error.value)
+    assert "ultra-secret" not in str(error.value)
 
 
 def test_postgres_engine_requires_a_database_url():
