@@ -23,8 +23,8 @@ THANKS_REPLY = "Avec plaisir. Vous pouvez poser une autre question sur la fiscal
 
 _GREETINGS = {"bonjour", "bonsoir", "salut", "hello", "coucou", "hi", "bjr", "slt", "allo", "hey"}
 _POLITE_TAILS = {
-    "", "julia", "a vous", "a toi", "tout le monde", "comment allez vous", "comment vas tu", "ca va",
-    "comment ca va",
+    "", "a vous", "a toi", "a tous", "tout le monde", "comment allez vous", "comment vas tu", "comment tu vas",
+    "comment vous allez", "ca va", "comment ca va", "tu vas bien", "vous allez bien", "ca va bien",
 }
 _THANKS = re.compile(r"^(ok |d accord |super |parfait |tres bien )?(merci|thanks)( beaucoup| bien| julia)*$")
 _ABOUT = re.compile(
@@ -45,8 +45,10 @@ def small_talk_reply(question: str) -> str | None:
     text = normalize(question)
     if not text:
         return None
-    first, _, rest = text.partition(" ")
-    if first in _GREETINGS and rest in _POLITE_TAILS:
+    words = text.split()
+    # « Salut Julia, comment vas-tu ? » : le prénom peut apparaître n'importe où.
+    rest = " ".join(word for word in words[1:] if word != "julia")
+    if words[0] in _GREETINGS and rest in _POLITE_TAILS:
         return GREETING_REPLY
     if _THANKS.match(text):
         return THANKS_REPLY
