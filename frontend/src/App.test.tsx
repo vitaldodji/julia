@@ -172,6 +172,58 @@ describe('Julia frontend', () => {
     expect(screen.getByText(/merci pour votre avis/i)).toBeVisible()
   })
 
+  it('keeps previous conversations in the history and reopens them', async () => {
+    const user = userEvent.setup()
+    const askQuestion = vi.fn().mockImplementation(async ({ question }: { question: string }) => ({
+      requestId: `req-${question}`,
+      conversationId: 'serveur',
+      status: 'answered',
+      answerMarkdown: `Réponse à « ${question} »`,
+      sources: [],
+    }))
+
+    render(<App askQuestion={askQuestion} initialView="chat" />)
+    const composer = screen.getByRole('textbox', { name: /votre question juridique/i })
+
+    await user.type(composer, 'Première question fiscale')
+    await user.click(screen.getByRole('button', { name: /envoyer/i }))
+    await screen.findByText(/réponse à « première question fiscale »/i)
+
+    await user.click(screen.getByRole('button', { name: /nouvelle conversation/i }))
+    await user.type(composer, 'Seconde question fiscale')
+    await user.click(screen.getByRole('button', { name: /envoyer/i }))
+    await screen.findByText(/réponse à « seconde question fiscale »/i)
+    expect(screen.queryByText(/réponse à « première question fiscale »/i)).not.toBeInTheDocument()
+
+    const history = screen.getByRole('navigation', { name: /historique des conversations/i })
+    await user.click(within(history).getByRole('button', { name: /première question fiscale/i }))
+
+    expect(screen.getByText(/réponse à « première question fiscale »/i)).toBeVisible()
+    expect(screen.queryByText(/réponse à « seconde question fiscale »/i)).not.toBeInTheDocument()
+  })
+
+  it('restores the history after a page reload', async () => {
+    const user = userEvent.setup()
+    const askQuestion = vi.fn().mockResolvedValue({
+      requestId: 'req-reload',
+      conversationId: 'serveur',
+      status: 'answered',
+      answerMarkdown: 'Réponse conservée',
+      sources: [],
+    })
+
+    const { unmount } = render(<App askQuestion={askQuestion} initialView="chat" />)
+    await user.type(screen.getByRole('textbox', { name: /votre question juridique/i }), 'Question à conserver')
+    await user.click(screen.getByRole('button', { name: /envoyer/i }))
+    await screen.findByText('Réponse conservée')
+    unmount()
+
+    render(<App askQuestion={askQuestion} initialView="chat" />)
+    const history = screen.getByRole('navigation', { name: /historique des conversations/i })
+
+    expect(within(history).getByRole('button', { name: /question à conserver/i })).toBeVisible()
+  })
+
   it('copies the complete answer and confirms the action', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)
