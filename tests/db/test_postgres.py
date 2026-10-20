@@ -17,7 +17,7 @@ from psycopg_pool import ConnectionPool
 from backend.db.catalog import PgCatalog
 from backend.db.migrate import migrate
 from backend.db.retriever import FTS_RANK, PgHybridRetriever
-from backend.db.stores import PgFeedbackStore, PgTraceStore, configure_connection
+from backend.db.stores import PgContactStore, PgFeedbackStore, PgTraceStore, configure_connection
 from backend.indexing.index_corpus import index_corpus
 from backend.indexing.manifest import Manifest, ManifestEntry
 from backend.rag.analyzer import analyze
@@ -25,7 +25,7 @@ from backend.rag.engine import RagEngine
 from backend.rag.fake import HashingEmbedder, ScriptedLLM
 from backend.rag.models import NoopReranker
 from backend.rag.types import AnalyzedQuery, AnswerStatus, SearchFilters
-from backend.stores import RetrievedHit, TraceRecord
+from backend.stores import ContactRecord, RetrievedHit, TraceRecord
 from contracts import LegalChunk
 
 pytestmark = pytest.mark.db
@@ -82,7 +82,7 @@ def database_url():
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute("DROP SCHEMA public CASCADE")
         conn.execute("CREATE SCHEMA public")
-    assert migrate(url) == ["001_init"]
+    assert migrate(url) == ["001_init", "002_contacts"]
     assert migrate(url) == []
     with psycopg.connect(url) as conn:
         register_vector(conn)
@@ -212,3 +212,17 @@ def test_traces_and_feedback_are_stored(pool):
 
     assert trace == ([{"chunk_id": "cgi-2026:0", "relevance": 0.8, "exact_match": False}], ["cgi-2026:0"])
     assert rating == 1
+
+
+def test_contacts_are_stored_with_their_date(pool):
+    store = PgContactStore(pool)
+    store.add(ContactRecord("Awa Dossou", "awa@cabinet-dossou.bj", phone="+229 01 97 00 00 00"), "hash-1")
+    store.add(ContactRecord("Kofi Mensah", "kofi@exemple.bj", company="Cabinet K", position="Fiscaliste"), None)
+
+    contacts = store.list_all()
+
+    assert [(c.full_name, c.phone, c.company, c.position) for c in contacts] == [
+        ("Awa Dossou", "+229 01 97 00 00 00", None, None),
+        ("Kofi Mensah", None, "Cabinet K", "Fiscaliste"),
+    ]
+    assert all(c.created_at and c.created_at[:4].isdigit() for c in contacts)

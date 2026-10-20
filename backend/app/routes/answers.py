@@ -13,8 +13,10 @@ from backend.app.dependencies import (
 from backend.app.errors import new_request_id, request_id_of
 from backend.app.ratelimit import RateLimited
 from backend.app.schemas import AnswerRequest, AnswerResponse, AnswerSource, ErrorResponse, document_url
+from backend.rag import messages
+from backend.rag.analyzer import missing_text_references
 from backend.rag.interfaces import LLMUnavailableError
-from backend.rag.types import Passage, SearchFilters
+from backend.rag.types import AnswerStatus, Passage, SearchFilters
 from backend.stores import RetrievedHit, TraceRecord, record_safely
 
 router = APIRouter(prefix="/api/v1", tags=["answers"])
@@ -59,6 +61,12 @@ def create_answer(
         record_safely(services.traces, TraceRecord(**common, status="error", error=str(error)))
         raise
 
+    answer_markdown = result.answer_markdown
+    if result.status is AnswerStatus.INSUFFICIENT_SOURCES:
+        known = (f"{doc.document_id} {doc.title}" for doc in services.catalog.list_documents())
+        if missing := missing_text_references(payload.question, known):
+            answer_markdown = messages.missing_texts(missing)
+
     trace = result.trace
     background.add_task(
         record_safely,
@@ -78,7 +86,7 @@ def create_answer(
         request_id=request_id,
         conversation_id=new_request_id(),
         status=result.status.value,
-        answer_markdown=result.answer_markdown,
+        answer_markdown=answer_markdown,
         sources=[_source(number, passage) for number, passage in enumerate(result.sources, start=1)],
     )
 

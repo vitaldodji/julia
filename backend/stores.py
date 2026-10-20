@@ -52,6 +52,35 @@ class TraceRecord:
     client_hash: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ContactRecord:
+    full_name: str
+    email: str
+    phone: str | None = None
+    company: str | None = None
+    position: str | None = None
+    created_at: str | None = None
+
+
+class ContactStore(Protocol):
+    def add(self, contact: ContactRecord, client_hash: str | None) -> None: ...
+
+    def list_all(self) -> list[ContactRecord]: ...
+
+
+class InMemoryContactStore:
+    def __init__(self) -> None:
+        self.contacts: list[ContactRecord] = []
+        self._lock = threading.Lock()
+
+    def add(self, contact: ContactRecord, client_hash: str | None) -> None:
+        with self._lock:
+            self.contacts.append(contact)
+
+    def list_all(self) -> list[ContactRecord]:
+        return list(self.contacts)
+
+
 class Catalog(Protocol):
     def list_documents(self) -> list[DocumentRecord]: ...
 

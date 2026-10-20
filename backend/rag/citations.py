@@ -15,6 +15,7 @@ from backend.rag.types import Passage
 
 _LABEL_GROUP = re.compile(r"([ \t]*)\[\s*(P\d+(?:\s*[,;]\s*P\d+)*)\s*\]", re.IGNORECASE)
 _BARE_NUMBERS = re.compile(r"[ \t]*\[\s*\d+(?:\s*[,;]\s*\d+)*\s*\]")
+_LOOSE_LABEL = re.compile(r"\b((?:le |du |au )?passage )?P(\d+)\b(?!\])", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +47,16 @@ def verify_citations(answer_markdown: str, passages: dict[str, Passage]) -> Veri
                 numbers.append(token)
         return match.group(1) + "".join(numbers) if numbers else ""
 
+    def renumber_loose(match: re.Match[str]) -> str:
+        # « le passage P1 » écrit hors crochets : l'étiquette interne ne doit pas apparaître.
+        label = f"P{match.group(2)}"
+        if label not in order:
+            return match.group(0)
+        return f"la source [{order.index(label) + 1}]"
+
     text = _BARE_NUMBERS.sub(drop_bare, answer_markdown)
     text = _LABEL_GROUP.sub(renumber, text)
+    text = _LOOSE_LABEL.sub(renumber_loose, text)
     return VerifiedAnswer(
         answer_markdown=text.strip(),
         sources=tuple(passages[label] for label in order),

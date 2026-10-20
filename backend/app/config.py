@@ -28,12 +28,22 @@ class RerankerMode(StrEnum):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="JULIA_", env_file=".env", extra="ignore")
+    # env_ignore_empty : « JULIA_LLM_API_KEY= » vaut « non renseignée », pas une clé vide.
+    # hide_input_in_errors : un refus de configuration ne doit jamais recopier les secrets dans les logs.
+    model_config = SettingsConfigDict(
+        env_prefix="JULIA_",
+        env_file=".env",
+        extra="ignore",
+        env_ignore_empty=True,
+        hide_input_in_errors=True,
+    )
 
     env: Environment = Environment.DEV
     engine: EngineMode = EngineMode.FAKE
     database_url: str | None = None
     data_raw_dir: Path = Path("data/raw")
+    frontend_dist: Path | None = None
+    """Dossier du front compilé (npm run build) : l'API le sert sur la même origine."""
 
     embedding_model: str = "BAAI/bge-m3"
     reranker: RerankerMode = RerankerMode.NONE
@@ -42,7 +52,7 @@ class Settings(BaseSettings):
 
     retrieve_k: int = Field(default=30, ge=1, le=200)
     context_k: int = Field(default=8, ge=1, le=30)
-    min_relevance: float = Field(default=0.45, ge=0.0, le=1.0)
+    min_relevance: float = Field(default=0.52, ge=0.0, le=1.0)
     reference_year: int = 2026
     max_passage_chars: int = Field(default=6000, ge=500)
     embedding_max_tokens: int = Field(default=1024, ge=64, le=8192)

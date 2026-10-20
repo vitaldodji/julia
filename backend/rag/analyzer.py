@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from backend.rag.types import AnalyzedQuery
 from contracts import article_key
@@ -20,6 +21,29 @@ _DOCUMENT_HINTS = [
     (re.compile(r"\bcgi\b|code\s+g[ée]n[ée]ral\s+des\s+imp[ôo]ts", re.IGNORECASE), "%code-general-des-impots%"),
     (re.compile(r"code\s+des\s+investissements", re.IGNORECASE), "%code-des-investissements%"),
 ]
+
+
+_TEXT_REFERENCE = re.compile(
+    r"\b(note\s+circulaire|note\s+de\s+service|circulaire|arr[êe]t[ée]|d[ée]cret)\s+"
+    r"(?:n\s*[°ºo]\s*\.?\s*)?(\d{2,5})\b",
+    re.IGNORECASE,
+)
+
+
+def text_references(question: str) -> list[tuple[str, str]]:
+    """Textes cités par leur numéro : [(« circulaire », « 1260 »)]. Les années sont ignorées."""
+    references = []
+    for match in _TEXT_REFERENCE.finditer(question):
+        kind, number = " ".join(match.group(1).lower().split()), match.group(2)
+        if not (len(number) == 4 and 1990 <= int(number) <= 2035):
+            references.append((kind, number))
+    return list(dict.fromkeys(references))
+
+
+def missing_text_references(question: str, known_documents: Iterable[str]) -> list[tuple[str, str]]:
+    """Textes cités dont le numéro n'apparaît dans l'identifiant ni le titre d'aucun document indexé."""
+    known_numbers = {token.lstrip("0") for label in known_documents for token in re.findall(r"\d+", label)}
+    return [ref for ref in text_references(question) if ref[1].lstrip("0") not in known_numbers]
 
 
 def analyze(question: str, reference_year: int) -> AnalyzedQuery:

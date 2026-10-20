@@ -65,10 +65,30 @@ def test_answer_follows_the_contract(api):
 def test_question_without_relevant_source_is_refused(api):
     client, _ = api()
 
-    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Bonjour, comment allez-vous ?"}).json()
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Quelle est la recette du poulet braisé ?"}).json()
 
     assert body["status"] == "insufficient_sources"
     assert body["sources"] == []
+
+
+def test_a_greeting_gets_a_welcome_message(api):
+    client, _ = api()
+
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Bonjour"}).json()
+
+    assert body["status"] == "clarification_required"
+    assert "Je suis **Julia**" in body["answer_markdown"]
+    assert body["sources"] == []
+
+
+def test_a_cited_text_missing_from_the_corpus_is_named_in_the_refusal(api):
+    client, _ = api()
+
+    body = client.post("/api/v1/answers", json={**QUESTION, "question": "Que prévoit la circulaire n°1260 ?"}).json()
+
+    assert body["status"] == "insufficient_sources"
+    assert "circulaire n°1260" in body["answer_markdown"]
+    assert "pas encore dans ma base documentaire" in body["answer_markdown"]
 
 
 @pytest.mark.parametrize(
@@ -219,6 +239,28 @@ def test_feedback_is_stored(api):
     assert client.post("/api/v1/feedback", json={"request_id": "abc", "rating": "bof"}).status_code == 422
 
 
+CONTACT = {
+    "full_name": "Awa Dossou", "email": "Awa@Example.com", "phone": "+229 01 97 00 00 00",
+    "company": "Cabinet A", "position": "Expert-comptable", "consent": True,
+}
+
+
+def test_contacts_are_collected_and_exported_for_the_team(api):
+    client, services = api(admin_token="secret-equipe")
+
+    assert client.post("/api/v1/contacts", json=CONTACT).status_code == 204
+    assert client.post("/api/v1/contacts", json={"full_name": "Kofi", "email": "k@x.bj", "phone": " ", "consent": True}).status_code == 204
+    assert client.post("/api/v1/contacts", json={**CONTACT, "email": "pas-un-mail"}).status_code == 422
+    assert client.post("/api/v1/contacts", json={**CONTACT, "consent": False}).status_code == 422
+    assert client.get("/api/v1/contacts").status_code == 401
+
+    export = client.get("/api/v1/contacts", headers={"X-Admin-Token": "secret-equipe"})
+
+    assert export.headers["content-type"].startswith("text/csv")
+    assert "Awa Dossou;awa@example.com;+229 01 97 00 00 00;Cabinet A;Expert-comptable" in export.text
+    assert [contact.phone for contact in services.contacts.list_all()] == ["+229 01 97 00 00 00", None]
+
+
 def test_health(api):
     client, _ = api()
 
@@ -228,6 +270,26 @@ def test_health(api):
         "status": "ok", "version": "0.1.0", "engine": "fake", "database": "not_configured",
         "corpus_version": "demo",
     }
+
+
+def test_built_frontend_is_served_on_the_same_origin(api, tmp_path: Path):
+    (tmp_path / "index.html").write_text("<!doctype html><title>Julia</title>", encoding="utf-8")
+    client, _ = api(frontend_dist=tmp_path)
+
+    page = client.get("/")
+    health = client.get("/api/health")
+    unknown_api = client.get("/api/v1/inconnu")
+
+    assert page.status_code == 200 and "<title>Julia</title>" in page.text
+    assert health.json()["status"] == "ok"
+    assert unknown_api.status_code == 404
+    assert unknown_api.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_empty_environment_values_count_as_missing(monkeypatch):
+    monkeypatch.setenv("JULIA_LLM_API_KEY", "")
+
+    assert Settings(_env_file=None).llm_api_key is None
 
 
 def test_published_contract_is_up_to_date():
