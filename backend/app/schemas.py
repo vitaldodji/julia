@@ -132,6 +132,25 @@ class FeedbackRequest(_Strict):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class ContactRequest(_Strict):
+    """Coordonnées laissées volontairement ; ce n'est pas une inscription."""
+
+    full_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    phone: str | None = Field(default=None, max_length=30, pattern=r"^\+?[0-9 ().-]{6,30}$")
+    company: str | None = Field(default=None, max_length=150)
+    position: str | None = Field(default=None, max_length=150)
+    consent: Literal[True] = Field(description="Accord explicite pour être recontacté par Vitalia.")
+
+    @field_validator("full_name", "email", "phone", "company", "position", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
 class HealthResponse(_Strict):
     status: Literal["ok", "degraded"]
     version: str

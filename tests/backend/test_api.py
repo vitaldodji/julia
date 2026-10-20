@@ -239,6 +239,28 @@ def test_feedback_is_stored(api):
     assert client.post("/api/v1/feedback", json={"request_id": "abc", "rating": "bof"}).status_code == 422
 
 
+CONTACT = {
+    "full_name": "Awa Dossou", "email": "Awa@Example.com", "phone": "+229 01 97 00 00 00",
+    "company": "Cabinet A", "position": "Expert-comptable", "consent": True,
+}
+
+
+def test_contacts_are_collected_and_exported_for_the_team(api):
+    client, services = api(admin_token="secret-equipe")
+
+    assert client.post("/api/v1/contacts", json=CONTACT).status_code == 204
+    assert client.post("/api/v1/contacts", json={"full_name": "Kofi", "email": "k@x.bj", "phone": " ", "consent": True}).status_code == 204
+    assert client.post("/api/v1/contacts", json={**CONTACT, "email": "pas-un-mail"}).status_code == 422
+    assert client.post("/api/v1/contacts", json={**CONTACT, "consent": False}).status_code == 422
+    assert client.get("/api/v1/contacts").status_code == 401
+
+    export = client.get("/api/v1/contacts", headers={"X-Admin-Token": "secret-equipe"})
+
+    assert export.headers["content-type"].startswith("text/csv")
+    assert "Awa Dossou;awa@example.com;+229 01 97 00 00 00;Cabinet A;Expert-comptable" in export.text
+    assert [contact.phone for contact in services.contacts.list_all()] == ["+229 01 97 00 00 00", None]
+
+
 def test_health(api):
     client, _ = api()
 

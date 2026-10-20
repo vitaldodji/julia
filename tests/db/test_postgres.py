@@ -82,7 +82,7 @@ def database_url():
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute("DROP SCHEMA public CASCADE")
         conn.execute("CREATE SCHEMA public")
-    assert migrate(url) == ["001_init"]
+    assert migrate(url) == ["001_init", "002_contacts"]
     assert migrate(url) == []
     with psycopg.connect(url) as conn:
         register_vector(conn)

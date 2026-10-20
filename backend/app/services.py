@@ -15,6 +15,8 @@ from backend.rag.models import NoopReranker
 from backend.rag.types import LLMCompletion
 from backend.stores import (
     Catalog,
+    ContactStore,
+    InMemoryContactStore,
     DocumentRecord,
     FeedbackStore,
     InMemoryCatalog,
@@ -34,6 +36,7 @@ class Services:
     feedback: FeedbackStore
     database_status: Callable[[], str]
     closers: list[Callable[[], None]] = field(default_factory=list)
+    contacts: ContactStore = field(default_factory=InMemoryContactStore)
 
     def close(self) -> None:
         for close in reversed(self.closers):
@@ -101,7 +104,13 @@ def build_postgres_services(settings: Settings) -> Services:
     from backend.db.catalog import PgCatalog
     from backend.db.migrate import migrate
     from backend.db.retriever import PgHybridRetriever
-    from backend.db.stores import PgFeedbackStore, PgTraceStore, configure_connection, database_status
+    from backend.db.stores import (
+        PgContactStore,
+        PgFeedbackStore,
+        PgTraceStore,
+        configure_connection,
+        database_status,
+    )
     from backend.rag.models import CrossEncoderReranker, build_embedder
 
     assert settings.database_url is not None  # garanti par Settings
@@ -139,6 +148,7 @@ def build_postgres_services(settings: Settings) -> Services:
         PgFeedbackStore(pool),
         lambda: database_status(pool),
         closers,
+        contacts=PgContactStore(pool),
     )
 
 

@@ -8,7 +8,7 @@ from pgvector.psycopg import register_vector
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from backend.stores import TraceRecord
+from backend.stores import ContactRecord, TraceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,26 @@ class PgTraceStore:
                     trace.client_hash,
                 ),
             )
+
+
+class PgContactStore:
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
+
+    def add(self, contact: ContactRecord, client_hash: str | None) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO contacts (full_name, email, phone, company, position, consent, client_hash)"
+                " VALUES (%s, %s, %s, %s, %s, true, %s)",
+                (contact.full_name, contact.email, contact.phone, contact.company, contact.position, client_hash),
+            )
+
+    def list_all(self) -> list[ContactRecord]:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT full_name, email, phone, company, position, created_at FROM contacts ORDER BY created_at"
+            ).fetchall()
+        return [ContactRecord(*row[:5], created_at=row[5].isoformat(timespec="seconds")) for row in rows]
 
 
 class PgFeedbackStore:
