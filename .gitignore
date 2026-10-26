@@ -8,6 +8,7 @@ node_modules/
 .next/
 .worktrees/
 frontend/dist/
+cauri/dist/
 frontend/coverage/
 *.tsbuildinfo
 data/raw/*
