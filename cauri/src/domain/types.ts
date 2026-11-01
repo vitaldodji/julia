@@ -63,6 +63,8 @@ export interface Income {
   note?: string
 }
 
+export type ExpenseWhen = 'faite' | 'a_venir'
+
 export interface Expense {
   id: string
   title: string
@@ -71,8 +73,13 @@ export interface Expense {
   personId: string
   category: CategoryId
   nature: 'besoin' | 'envie'
+  when?: ExpenseWhen
   templateId?: string
   note?: string
+}
+
+export function expenseWhen(expense: Expense): ExpenseWhen {
+  return expense.when === 'a_venir' ? 'a_venir' : 'faite'
 }
 
 export interface Goal {

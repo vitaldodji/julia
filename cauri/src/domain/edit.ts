@@ -1,5 +1,5 @@
 import { inPeriod, occurrenceDate, parseISO, type Period } from './period'
-import type { CategoryId, Contribution, Expense, Goal, Income, IncomeKind, Review, Space, Template } from './types'
+import type { CategoryId, Contribution, Expense, ExpenseWhen, Goal, Income, IncomeKind, Review, Space, Template } from './types'
 
 export interface IncomeDraft {
   title: string
@@ -18,6 +18,7 @@ export interface ExpenseDraft {
   personId: string
   category: CategoryId
   nature: 'besoin' | 'envie'
+  when?: ExpenseWhen
   note?: string
   recurring: boolean
 }
@@ -145,6 +146,7 @@ export function addExpense(space: Space, draft: ExpenseDraft): Space {
     personId: draft.personId,
     category: draft.category,
     nature: draft.nature,
+    when: draft.when === 'a_venir' ? 'a_venir' : 'faite',
     templateId,
     note: cleanNote(draft.note),
   }
@@ -163,6 +165,7 @@ export function updateExpense(space: Space, id: string, draft: Omit<ExpenseDraft
           personId: draft.personId,
           category: draft.category,
           nature: draft.nature,
+          when: draft.when === 'a_venir' ? 'a_venir' : 'faite',
           note: cleanNote(draft.note),
         }
       : item),

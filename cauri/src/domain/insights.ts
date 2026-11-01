@@ -1,5 +1,5 @@
 import { diffDays, inPeriod, monthsLeft, type Period } from './period'
-import type { CategoryId, Goal, Space } from './types'
+import { expenseWhen, type CategoryId, type Goal, type Space } from './types'
 
 export interface GoalProgress {
   goal: Goal
@@ -31,6 +31,7 @@ export interface PersonFlow {
 export interface Summary {
   income: number
   expenses: number
+  upcoming: number
   contributions: number
   leftover: number
   savingsRate: number | null
@@ -56,10 +57,13 @@ function sum(values: number[]): number {
 
 export function summarize(space: Space, period: Period, today: string): Summary {
   const incomes = space.incomes.filter((item) => inPeriod(item.date, period))
-  const expenses = space.expenses.filter((item) => inPeriod(item.date, period))
+  const inMonth = space.expenses.filter((item) => inPeriod(item.date, period))
+  const expenses = inMonth.filter((item) => expenseWhen(item) === 'faite')
+  const upcomingRows = inMonth.filter((item) => expenseWhen(item) === 'a_venir')
   const contributions = space.contributions.filter((item) => inPeriod(item.date, period))
   const income = sum(incomes.map((item) => item.amount))
   const spent = sum(expenses.map((item) => item.amount))
+  const upcoming = sum(upcomingRows.map((item) => item.amount))
   const saved = sum(contributions.map((item) => item.amount))
   const needs = sum(expenses.filter((item) => item.nature === 'besoin').map((item) => item.amount))
   const wants = sum(expenses.filter((item) => item.nature === 'envie').map((item) => item.amount))
@@ -117,6 +121,7 @@ export function summarize(space: Space, period: Period, today: string): Summary 
   return {
     income,
     expenses: spent,
+    upcoming,
     contributions: saved,
     leftover,
     savingsRate: share(saved),

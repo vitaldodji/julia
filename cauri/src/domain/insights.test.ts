@@ -58,6 +58,20 @@ describe('bilan', () => {
     expect(summary.missing).toHaveLength(0)
     expect(summary.goals[0].onTrack).toBe(true)
     expect(summary.byPerson[0].expenses).toBe(100_000)
+    book = addExpense(book, {
+      title: 'Scolarité',
+      amount: 5_000,
+      date: '2026-10-20',
+      personId,
+      category: 'etudes',
+      nature: 'besoin',
+      when: 'a_venir',
+      recurring: false,
+    })
+    const withPlan = summarize(book, period, today)
+    expect(withPlan.expenses).toBe(100_000)
+    expect(withPlan.upcoming).toBe(5_000)
+    expect(withPlan.leftover).toBe(180_000)
   })
 
   it('signale un prévu non pointé et un objectif en retard', () => {

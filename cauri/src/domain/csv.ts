@@ -1,6 +1,6 @@
 import { exponent } from './money'
 import { inPeriod, type Period } from './period'
-import { categoryLabel, incomeKindLabel, type Currency, type Space } from './types'
+import { categoryLabel, expenseWhen, incomeKindLabel, type Currency, type Space } from './types'
 
 function cell(value: string): string {
   return `"${value.replaceAll('"', '""')}"`
@@ -32,7 +32,7 @@ export function monthCsv(space: Space, period: Period): string {
       expense.date,
       expense.title,
       amountCell(expense.amount, space.currency),
-      `${categoryLabel(expense.category)} · ${expense.nature}`,
+      `${categoryLabel(expense.category)} · ${expenseWhen(expense) === 'a_venir' ? 'à venir' : 'faite'}`,
       people.get(expense.personId) ?? '',
       expense.note ?? '',
     ])
