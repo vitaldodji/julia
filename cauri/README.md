@@ -2,7 +2,7 @@
 
 Cahier personnel pour les revenus, les dépenses et les objectifs. Le bilan du mois dit ce qui est gagné, dépensé, mis de côté, et si les objectifs sont tenus.
 
-Les chiffres restent dans le navigateur, chiffrés avec le mot de passe de l’espace. Cauri ne les envoie pas à un serveur. Sur un autre appareil, il faut emporter la sauvegarde depuis Réglages.
+Le nom du compte et le mot de passe rouvrent le cahier chiffré sur un autre appareil. Les montants ne circulent pas en clair.
 
 ```bash
 cd cauri

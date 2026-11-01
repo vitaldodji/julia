@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { normalizeLogin } from '../domain/cloud'
 import { monthCsv } from '../domain/csv'
 import { addPerson, removePerson, renamePerson } from '../domain/edit'
 import { clampMonthStart } from '../domain/period'
@@ -9,10 +10,11 @@ import { useVault } from '../store'
 import { downloadText } from '../ui'
 
 export function Settings() {
-  const { session, commit, changePassword, rotateRecovery, removeSpace, exportRecord, importRecord } = useVault()
+  const { session, commit, changePassword, rotateRecovery, relink, removeSpace, exportRecord, importRecord } = useVault()
   const space = session!.space
   const { period } = usePeriod()
   const [name, setName] = useState(space.displayName)
+  const [login, setLogin] = useState(space.loginName || normalizeLogin(space.displayName))
   const [day, setDay] = useState(String(space.monthStartsOn))
   const [rule, setRule] = useState(space.rule)
   const [person, setPerson] = useState('')
@@ -69,13 +71,32 @@ export function Settings() {
       <header className="page-head">
         <p className="kicker">Réglages</p>
         <h1 className="page-title">L’espace</h1>
-        <p className="lede">Les chiffres restent chiffrés dans ce navigateur. Pour changer d’appareil, emporte la sauvegarde.</p>
+        <p className="lede">Le même nom de compte et le même mot de passe rouvrent le cahier sur un autre téléphone. Les montants restent chiffrés.</p>
       </header>
       {message && <p className="ok-line">{message}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
 
       <section className="panel stack">
-        <h2>Nom</h2>
+        <h2>Nom du compte</h2>
+        <p className="muted">C’est ce nom, avec le mot de passe, qui ouvre le cahier sur un autre téléphone.</p>
+        <form className="inline-form" onSubmit={(event) => {
+          event.preventDefault()
+          if (normalizeLogin(login).length < 2) return setError('Le nom du compte est trop court.')
+          setBusy(true)
+          void relink(login).then(() => {
+            flash('Nom de compte enregistré.')
+          }).catch((caught: unknown) => {
+            setMessage(null)
+            setError(caught instanceof Error ? caught.message : 'Impossible de changer le nom du compte.')
+          }).finally(() => setBusy(false))
+        }}>
+          <input data-testid="input-account" value={login} onChange={(event) => setLogin(event.target.value)} aria-label="Nom du compte" autoComplete="username" />
+          <button className="btn btn-tiny" disabled={busy}>Enregistrer</button>
+        </form>
+      </section>
+
+      <section className="panel stack">
+        <h2>Nom affiché</h2>
         <form className="inline-form" onSubmit={(event) => {
           event.preventDefault()
           if (name.trim().length < 2) return setError('Le nom est trop court.')
@@ -230,7 +251,7 @@ export function Settings() {
 
       <section className="panel danger-zone">
         <h2>Retirer cet espace</h2>
-        <p className="muted">Ça efface le coffre de cet appareil. Sans sauvegarde, les chiffres sont perdus.</p>
+        <p className="muted">Ça retire le cahier de cet appareil. Le compte reste : le même nom et le même mot de passe l’ouvrent ailleurs.</p>
         {confirmDelete ? (
           <button type="button" className="btn btn-danger" onClick={() => {
             removeSpace(space.id)

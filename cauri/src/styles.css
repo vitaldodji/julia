@@ -144,6 +144,7 @@ ul, ol { margin: 0; padding: 0; }
 .recovery-code { font-family: var(--serif); font-size: 28px; letter-spacing: 0.04em; color: var(--ink); }
 .form-error { color: var(--danger); }
 .switch-auth { color: var(--muted); }
+.local-copies { margin-top: 4px; }
 .space-pill { font-family: var(--serif); font-size: 28px; }
 .file-btn input { display: none; }
 

@@ -14,7 +14,7 @@ export function CreateScreen() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     if (name.trim().length < 2) {
-      setError('Indique ton prénom, ou le nom de l’espace.')
+      setError('Indique le nom du compte.')
       return
     }
     if (password.length < 6) {
@@ -29,8 +29,8 @@ export function CreateScreen() {
     setError(null)
     try {
       setRecovery(await createSpace(name, password))
-    } catch {
-      setError(storageError ?? 'Impossible de créer l’espace sur cet appareil.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Impossible de créer le compte. Réessaie.')
     } finally {
       setBusy(false)
     }
@@ -60,12 +60,12 @@ export function CreateScreen() {
 
   return (
     <AuthFrame>
-      <p className="kicker">Nouvel espace</p>
+      <p className="kicker">Nouveau compte</p>
       <h1>Ouvre ton cahier.</h1>
-      <p className="lede">Ensuite tu notes les revenus, puis les dépenses. Les chiffres ne quittent pas cet appareil.</p>
+      <p className="lede">Ce nom et ce mot de passe rouvrent le cahier sur un autre téléphone. Les montants partent chiffrés.</p>
       <form onSubmit={onSubmit} className="stack">
-        <Field label="Ton prénom">
-          <input data-testid="input-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="nickname" required />
+        <Field label="Nom du compte">
+          <input data-testid="input-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="username" required />
         </Field>
         <Field label="Mot de passe">
           <input data-testid="input-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required />
@@ -76,87 +76,81 @@ export function CreateScreen() {
         {error && <p className="form-error" role="alert">{error}</p>}
         {storageError && <p className="form-error">{storageError}</p>}
         <button className="btn btn-primary" data-testid="submit-create" disabled={busy}>
-          {busy ? 'Création du coffre…' : 'Créer l’espace'}
+          {busy ? 'Création du compte…' : 'Créer le compte'}
         </button>
       </form>
-      <p className="switch-auth">Déjà un espace ? <a href="#/entrer">Entrer</a></p>
+      <p className="switch-auth">Déjà un compte ? <a href="#/entrer">Entrer</a></p>
     </AuthFrame>
   )
 }
 
 export function EnterScreen() {
-  const { spaces, unlock, storageError, removeSpace } = useVault()
-  const [spaceId, setSpaceId] = useState(spaces[0]?.id ?? '')
+  const { spaces, openAccount, storageError, removeSpace } = useVault()
+  const [name, setName] = useState('')
   const [secret, setSecret] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirmDrop, setConfirmDrop] = useState(false)
-  const selected = spaces.find((item) => item.id === spaceId) ?? spaces[0]
+  const [confirmDrop, setConfirmDrop] = useState<string | null>(null)
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (!selected) return
     setBusy(true)
     setError(null)
-    const ok = await unlock(selected.id, secret)
-    setBusy(false)
-    if (!ok) {
-      setError('Ce mot de passe, ou ce code, n’ouvre pas cet espace.')
-      return
+    try {
+      const result = await openAccount(name, secret)
+      if (result !== 'opened') {
+        setError(result === 'denied'
+          ? 'Ce mot de passe, ou ce code, n’ouvre pas ce compte.'
+          : 'Aucun compte sous ce nom. Vérifie l’orthographe, ou crée-le.')
+        return
+      }
+      const next = sessionStorage.getItem('cauri.next')
+      sessionStorage.removeItem('cauri.next')
+      window.location.hash = next && next.startsWith('#/') && next !== '#/' && next !== '#/creer' && next !== '#/entrer'
+        ? next
+        : '#/tableau'
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Connexion impossible. Réessaie.')
+    } finally {
+      setBusy(false)
     }
-    const next = sessionStorage.getItem('cauri.next')
-    sessionStorage.removeItem('cauri.next')
-    window.location.hash = next && next.startsWith('#/') && next !== '#/' && next !== '#/creer' && next !== '#/entrer'
-      ? next
-      : '#/tableau'
   }
 
   return (
     <AuthFrame>
       <p className="kicker">Entrée</p>
-      <h1>Rouvre le coffre.</h1>
-      {spaces.length === 0 ? (
-        <p className="lede">Aucun espace sur cet appareil. <a href="#/creer">Créer le premier</a>.</p>
-      ) : (
-        <form onSubmit={onSubmit} className="stack">
-          {spaces.length > 1 && (
-            <Field label="Espace">
-              <select value={selected?.id} onChange={(event) => { setSpaceId(event.target.value); setConfirmDrop(false) }}>
-                {spaces.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
-              </select>
-            </Field>
-          )}
-          {spaces.length === 1 && <p className="space-pill">{selected?.displayName}</p>}
-          <Field label="Mot de passe ou code de secours">
-            <input data-testid="input-secret" type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="current-password" required />
-          </Field>
-          {error && <p className="form-error" role="alert">{error}</p>}
-          {storageError && <p className="form-error">{storageError}</p>}
-          <button className="btn btn-primary" data-testid="submit-unlock" disabled={busy}>
-            {busy ? 'Ouverture…' : 'Entrer'}
-          </button>
-          {selected && (
-            confirmDrop ? (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => {
-                  removeSpace(selected.id)
-                  setConfirmDrop(false)
-                  setSpaceId('')
-                }}
-              >
-                Retirer {selected.displayName} de cet appareil
+      <h1>Rouvre le compte.</h1>
+      <p className="lede">Le même nom et le même mot de passe, sur ce téléphone ou un autre.</p>
+      <form onSubmit={onSubmit} className="stack">
+        <Field label="Nom du compte">
+          <input data-testid="input-login" value={name} onChange={(event) => setName(event.target.value)} autoComplete="username" required />
+        </Field>
+        <Field label="Mot de passe ou code de secours">
+          <input data-testid="input-secret" type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="current-password" required />
+        </Field>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {storageError && <p className="form-error">{storageError}</p>}
+        <button className="btn btn-primary" data-testid="submit-unlock" disabled={busy}>
+          {busy ? 'Ouverture…' : 'Entrer'}
+        </button>
+      </form>
+      {spaces.length > 0 && (
+        <div className="stack local-copies">
+          <p className="muted">Déjà copiés sur cet appareil</p>
+          {spaces.map((item) => (
+            confirmDrop === item.id ? (
+              <button key={item.id} type="button" className="btn btn-danger" onClick={() => { removeSpace(item.id); setConfirmDrop(null) }}>
+                Retirer {item.displayName} de cet appareil
               </button>
             ) : (
-              <button type="button" className="text-btn" onClick={() => setConfirmDrop(true)}>
-                Retirer cet espace de l’appareil
+              <button key={item.id} type="button" className="text-btn" onClick={() => setConfirmDrop(item.id)}>
+                Retirer {item.displayName} de cet appareil
               </button>
             )
-          )}
-        </form>
+          ))}
+        </div>
       )}
-      <p className="switch-auth">Pas encore de cahier ? <a href="#/creer">Créer un espace</a></p>
+      <p className="switch-auth">Pas encore de cahier ? <a href="#/creer">Créer un compte</a></p>
     </AuthFrame>
   )
 }

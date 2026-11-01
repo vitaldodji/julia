@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { browserStore, readRecords, upsertRecord, writeRecords } from './domain/storage'
+import { fetchVaultBin, findAccount, normalizeLogin, publishRecord, releaseAccount, saveVaultBin, type CloudLink } from './domain/cloud'
+import { browserStore, readLinks, readRecords, upsertRecord, writeLinks, writeRecords } from './domain/storage'
 import type { Space } from './domain/types'
 import {
   createRecord,
@@ -22,6 +23,8 @@ interface Session {
   record: VaultRecord
 }
 
+export type OpenResult = 'opened' | 'unknown' | 'denied'
+
 interface VaultApi {
   ready: boolean
   spaces: Array<{ id: string; displayName: string }>
@@ -29,11 +32,12 @@ interface VaultApi {
   storageError: string | null
   persistError: string | null
   createSpace: (name: string, password: string) => Promise<string>
-  unlock: (id: string, secret: string) => Promise<boolean>
+  openAccount: (name: string, secret: string) => Promise<OpenResult>
   lock: () => void
   commit: (recipe: (space: Space) => Space) => void
   changePassword: (current: string, next: string) => Promise<boolean>
   rotateRecovery: (password: string) => Promise<string | null>
+  relink: (loginName: string) => Promise<void>
   removeSpace: (id: string) => void
   importRecord: (record: VaultRecord) => string | null
   exportRecord: () => Promise<VaultRecord | null>
@@ -67,6 +71,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [persistError, setPersistError] = useState<string | null>(null)
   const sessionRef = useRef<Session | null>(null)
   const recordsRef = useRef<VaultRecord[]>([])
+  const linksRef = useRef<Record<string, CloudLink>>({})
   const blockedRef = useRef(false)
   const chain = useRef(Promise.resolve())
 
@@ -81,18 +86,78 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return run
   }, [])
 
+  const rememberLink = useCallback((spaceId: string, link: CloudLink) => {
+    linksRef.current = { ...linksRef.current, [spaceId]: link }
+    try {
+      writeLinks(browserStore(), linksRef.current)
+    } catch {
+      /* La copie locale est facultative : le compte reste joignable par son nom. */
+    }
+  }, [])
+
+  const forgetLink = useCallback((spaceId: string) => {
+    if (!linksRef.current[spaceId]) return
+    const next = { ...linksRef.current }
+    delete next[spaceId]
+    linksRef.current = next
+    try {
+      writeLinks(browserStore(), next)
+    } catch {
+      /* Même sans copie locale, le compte distant n’est pas effacé. */
+    }
+  }, [])
+
+  const saveRecords = useCallback((next: VaultRecord[]) => {
+    if (!blockedRef.current) {
+      try {
+        writeRecords(browserStore(), next)
+      } catch {
+        /* Navigation privée : la session tient, le compte distant aussi. */
+      }
+    }
+    remember(next)
+  }, [remember])
+
+  const pushRemote = useCallback(async (record: VaultRecord, space: Space) => {
+    const link = linksRef.current[record.id]
+    if (link) {
+      await saveVaultBin(link.binId, record)
+      return
+    }
+    const published = await publishRecord(record, space.loginName || space.displayName)
+    rememberLink(record.id, published)
+  }, [rememberLink])
+
   useEffect(() => {
-    const loaded = readRecords(browserStore())
+    let loaded = { records: [] as VaultRecord[], broken: false }
+    try {
+      loaded = readRecords(browserStore())
+    } catch {
+      loaded = { records: [], broken: true }
+    }
     recordsRef.current = loaded.records
     setRecords(loaded.records)
     blockedRef.current = loaded.broken
+    linksRef.current = readLinks(browserStore())
     setStorageError(loaded.broken ? 'La mémoire de cet appareil est illisible. Rien n’a été écrasé.' : null)
-    void restoreSession(loaded.records).then((restored) => {
+    void (async () => {
+      const restored = await restoreSession(loaded.records)
       if (!restored) return
-      sessionRef.current = restored
-      setSession(restored)
-    }).finally(() => setReady(true))
-  }, [])
+      const link = linksRef.current[restored.record.id]
+      let next = restored
+      if (link) {
+        try {
+          const remote = await fetchRemoteIfNewer(link.binId, restored)
+          if (remote) next = remote
+        } catch {
+          /* On garde la copie de cet appareil si le réseau manque. */
+        }
+      }
+      sessionRef.current = next
+      setSession(next)
+      if (next.record !== restored.record) saveRecords(upsertRecord(recordsRef.current, next.record))
+    })().finally(() => setReady(true))
+  }, [saveRecords])
 
   useEffect(() => {
     const id = session?.space.id
@@ -103,51 +168,92 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     })
   }, [session?.space.id, session?.dataKey])
 
-  const saveRecords = useCallback((next: VaultRecord[]) => {
-    writeRecords(browserStore(), next)
-    remember(next)
-  }, [remember])
-
   const persist = useCallback(() => {
     void enqueue(async () => {
       const current = sessionRef.current
-      if (!current || blockedRef.current) return
-      const sealed = await sealPayload(current.record, current.dataKey, current.space)
+      if (!current) return
+      const space = current.space.loginName
+        ? current.space
+        : { ...current.space, loginName: normalizeLogin(current.space.displayName) }
+      const sealed = await sealPayload(current.record, current.dataKey, space)
       const latest = sessionRef.current
-      if (!latest || latest.space !== current.space) {
+      if (!latest || (latest.space !== current.space && latest.space !== space)) {
         persist()
         return
       }
-      const next = { ...latest, record: sealed }
+      const next = { ...latest, space, record: sealed }
       sessionRef.current = next
       setSession(next)
       saveRecords(upsertRecord(recordsRef.current, sealed))
-      setPersistError(null)
+      try {
+        await pushRemote(sealed, space)
+        setPersistError(null)
+      } catch (error) {
+        setPersistError(error instanceof Error ? error.message : 'L’enregistrement n’a pas atteint les autres appareils.')
+      }
     }).catch(() => {
-      setPersistError('La sauvegarde sur cet appareil a échoué.')
+      setPersistError('La sauvegarde a échoué.')
     })
-  }, [enqueue, saveRecords])
+  }, [enqueue, pushRemote, saveRecords])
 
-  const createSpace = useCallback(async (name: string, password: string) => {
-    if (blockedRef.current) throw new Error('mémoire illisible')
-    const created = await createRecord(name, password)
-    const next = { space: created.space, dataKey: created.dataKey, record: created.record }
+  useEffect(() => {
+    const current = sessionRef.current
+    if (!current) return
+    if (linksRef.current[current.space.id]) return
+    persist()
+  }, [session?.space.id, persist])
+
+  const adopt = useCallback((space: Space, dataKey: CryptoKey, record: VaultRecord) => {
+    const next = { space, dataKey, record }
     sessionRef.current = next
     setSession(next)
-    saveRecords(upsertRecord(recordsRef.current, created.record))
-    return created.recoveryCode
+    saveRecords(upsertRecord(recordsRef.current, record))
   }, [saveRecords])
 
-  const unlock = useCallback(async (id: string, secret: string) => {
-    const record = recordsRef.current.find((item) => item.id === id)
-    if (!record) return false
-    const opened = await unlockRecord(record, secret)
-    if (!opened) return false
-    const next = { space: opened.space, dataKey: opened.dataKey, record: opened.record }
-    sessionRef.current = next
-    setSession(next)
-    return true
-  }, [])
+  const createSpace = useCallback(async (name: string, password: string) => {
+    const created = await createRecord(name, password)
+    const space = { ...created.space, loginName: normalizeLogin(name) }
+    const record = await sealPayload(created.record, created.dataKey, space)
+    const link = await publishRecord(record, name)
+    rememberLink(record.id, link)
+    adopt(space, created.dataKey, record)
+    setPersistError(null)
+    return created.recoveryCode
+  }, [adopt, rememberLink])
+
+  const openAccount = useCallback(async (name: string, secret: string): Promise<OpenResult> => {
+    const normalized = normalizeLogin(name)
+    if (normalized.length < 2) throw new Error('Le nom du compte est trop court.')
+    const found = await findAccount(name)
+    if (found) {
+      const local = recordsRef.current.find((item) => item.id === found.record.id)
+      const preferLocal = Boolean(local && local.updatedAt > found.record.updatedAt)
+      const first = preferLocal && local ? local : found.record
+      const second = first === found.record ? null : found.record
+      let opened = await unlockRecord(first, secret)
+      let record = first
+      if (!opened && second) {
+        opened = await unlockRecord(second, secret)
+        record = second
+      }
+      if (!opened) return 'denied'
+      rememberLink(record.id, { loginKey: found.loginKey, binId: found.binId, loginName: normalized })
+      const space = opened.space.loginName === normalized ? opened.space : { ...opened.space, loginName: normalized }
+      adopt(space, opened.dataKey, record)
+      if (space !== opened.space || record !== found.record) persist()
+      return 'opened'
+    }
+    const locals = recordsRef.current.filter((item) =>
+      normalizeLogin(item.displayName) === normalized || linksRef.current[item.id]?.loginName === normalized,
+    )
+    for (const candidate of locals) {
+      const opened = await unlockRecord(candidate, secret)
+      if (!opened) continue
+      adopt({ ...opened.space, loginName: normalized }, opened.dataKey, candidate)
+      return 'opened'
+    }
+    return locals.length > 0 ? 'denied' : 'unknown'
+  }, [adopt, persist, rememberLink])
 
   const lock = useCallback(() => {
     sessionRef.current = null
@@ -174,8 +280,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     sessionRef.current = next
     setSession(next)
     saveRecords(upsertRecord(recordsRef.current, record))
+    try {
+      await pushRemote(record, current.space)
+      setPersistError(null)
+    } catch (error) {
+      setPersistError(error instanceof Error ? error.message : 'Le mot de passe a changé ici. Les autres appareils ne l’ont pas encore.')
+    }
     return true
-  }), [enqueue, saveRecords])
+  }), [enqueue, pushRemote, saveRecords])
 
   const rotateRecovery = useCallback((password: string) => enqueue(async () => {
     const current = sessionRef.current
@@ -187,16 +299,58 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     sessionRef.current = next
     setSession(next)
     saveRecords(upsertRecord(recordsRef.current, rotated.record))
+    try {
+      await pushRemote(rotated.record, current.space)
+      setPersistError(null)
+    } catch (error) {
+      setPersistError(error instanceof Error ? error.message : 'Le nouveau code est prêt ici. Les autres appareils ne l’ont pas encore.')
+    }
     return rotated.recoveryCode
-  }), [enqueue, saveRecords])
+  }), [enqueue, pushRemote, saveRecords])
+
+  const relink = useCallback((loginName: string) => enqueue(async () => {
+    const current = sessionRef.current
+    if (!current) throw new Error('Ouvre d’abord le coffre.')
+    const name = normalizeLogin(loginName)
+    if (name.length < 2) throw new Error('Le nom du compte est trop court.')
+    const previous = linksRef.current[current.record.id]
+    const space = { ...current.space, loginName: name }
+    const sealed = await sealPayload(current.record, current.dataKey, space)
+    if (previous?.loginName === name) {
+      await saveVaultBin(previous.binId, sealed)
+      adopt(space, current.dataKey, sealed)
+      setPersistError(null)
+      return
+    }
+    forgetLink(current.record.id)
+    try {
+      const published = await publishRecord(sealed, name)
+      rememberLink(current.record.id, published)
+      adopt(space, current.dataKey, sealed)
+      if (previous && previous.loginKey !== published.loginKey) {
+        try {
+          await releaseAccount(previous.loginKey)
+        } catch {
+          setPersistError('Le nouveau nom fonctionne. L’ancien nom répond encore pour l’instant.')
+          return
+        }
+      }
+      setPersistError(null)
+    } catch (error) {
+      if (previous) rememberLink(current.record.id, previous)
+      throw error
+    }
+  }), [adopt, enqueue, forgetLink, rememberLink])
 
   const removeSpace = useCallback((id: string) => {
     saveRecords(recordsRef.current.filter((item) => item.id !== id))
+    forgetLink(id)
     if (sessionRef.current?.space.id === id) {
       sessionRef.current = null
       setSession(null)
+      sessionStorage.removeItem(SESSION_KEY)
     }
-  }, [saveRecords])
+  }, [forgetLink, saveRecords])
 
   const importRecord = useCallback((record: VaultRecord) => {
     if (!isVaultRecord(record)) return 'Ce fichier n’est pas une sauvegarde Cauri.'
@@ -218,11 +372,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     storageError,
     persistError,
     createSpace,
-    unlock,
+    openAccount,
     lock,
     commit,
     changePassword,
     rotateRecovery,
+    relink,
     removeSpace,
     importRecord,
     exportRecord,
@@ -233,17 +388,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     storageError,
     persistError,
     createSpace,
-    unlock,
+    openAccount,
     lock,
     commit,
     changePassword,
     rotateRecovery,
+    relink,
     removeSpace,
     importRecord,
     exportRecord,
   ])
 
   return <VaultContext.Provider value={api}>{children}</VaultContext.Provider>
+}
+
+async function fetchRemoteIfNewer(binId: string, local: Session): Promise<Session | null> {
+  const remote = await fetchVaultBin(binId)
+  if (remote.updatedAt <= local.record.updatedAt) return null
+  const opened = await openWithKey(remote, local.dataKey)
+  if (!opened) return null
+  return { space: opened.space, dataKey: local.dataKey, record: remote }
 }
 
 export function useVault(): VaultApi {

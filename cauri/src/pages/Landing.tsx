@@ -27,7 +27,7 @@ export function Landing() {
             <a className="btn btn-ghost" href="#/entrer">J’ai déjà un espace</a>
           </div>
           <ul className="facts">
-            <li>Chiffré sur cet appareil</li>
+            <li>Le même compte sur un autre téléphone</li>
             <li>Toi, et les personnes que tu suis</li>
             <li>Plusieurs objectifs en parallèle</li>
           </ul>
@@ -54,7 +54,7 @@ export function Landing() {
       <section className="band">
         <h2>Le mois en quatre gestes</h2>
         <ol className="band-grid">
-          <li><span>1</span><strong>Tu crées un espace.</strong> Un mot de passe, et un code de secours à garder ailleurs.</li>
+          <li><span>1</span><strong>Tu crées un compte.</strong> Un nom, un mot de passe, et un code de secours à garder ailleurs.</li>
           <li><span>2</span><strong>Tu notes tes revenus.</strong> Salaire, activité, aide : tout ce qui entre, une fois ou chaque mois.</li>
           <li><span>3</span><strong>Tu notes chaque dépense.</strong> Un titre, un montant, pour toi ou pour une autre personne.</li>
           <li><span>4</span><strong>Tu lis le bilan.</strong> Gagné, dépensé, mis de côté, et si les objectifs du mois sont atteints.</li>
@@ -85,8 +85,7 @@ export function Landing() {
       <footer className="foot">
         <Brand />
         <p>
-          Les chiffres restent dans ce navigateur, chiffrés par ton mot de passe. Cauri ne les envoie nulle part.
-          Sur un autre téléphone, emporte la sauvegarde depuis Réglages.
+          Les montants restent chiffrés. Le même nom de compte et le même mot de passe rouvrent le cahier sur un autre téléphone.
         </p>
       </footer>
     </div>

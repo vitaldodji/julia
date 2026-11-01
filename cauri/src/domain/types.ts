@@ -109,6 +109,7 @@ export interface Space {
   v: 1
   id: string
   displayName: string
+  loginName?: string
   currency: Currency
   monthStartsOn: number
   rule: Rule
