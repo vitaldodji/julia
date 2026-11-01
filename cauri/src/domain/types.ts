@@ -1,11 +1,13 @@
 export const CATEGORIES = [
-  { id: 'logement', label: 'Logement' },
-  { id: 'nourriture', label: 'Nourriture' },
   { id: 'transport', label: 'Transport' },
+  { id: 'plaisirs', label: 'Petits plaisirs' },
+  { id: 'famille', label: 'Famille' },
+  { id: 'etudes', label: 'Études' },
+  { id: 'nourriture', label: 'Nourriture' },
+  { id: 'logement', label: 'Logement' },
   { id: 'communication', label: 'Communication' },
   { id: 'sante', label: 'Santé' },
   { id: 'education', label: 'Éducation' },
-  { id: 'famille', label: 'Famille' },
   { id: 'factures', label: 'Factures' },
   { id: 'vetements', label: 'Vêtements' },
   { id: 'loisirs', label: 'Loisirs' },
@@ -13,14 +15,20 @@ export const CATEGORIES = [
   { id: 'autre', label: 'Autre' },
 ] as const
 
+export const QUICK_CATEGORIES = ['transport', 'plaisirs', 'famille', 'etudes', 'autre'] as const satisfies readonly CategoryId[]
+
 export type CategoryId = (typeof CATEGORIES)[number]['id']
 
 export const INCOME_KINDS = [
+  { id: 'cours_maison', label: 'Cours à domicile' },
+  { id: 'cours_college', label: 'Cours au collège' },
   { id: 'salaire', label: 'Salaire' },
   { id: 'activite', label: 'Activité' },
   { id: 'aide', label: 'Aide' },
   { id: 'autre', label: 'Autre' },
 ] as const
+
+export const QUICK_INCOMES = ['cours_maison', 'cours_college', 'autre'] as const satisfies readonly IncomeKind[]
 
 export type IncomeKind = (typeof INCOME_KINDS)[number]['id']
 

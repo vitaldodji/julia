@@ -10,13 +10,10 @@ import { Review } from './Review'
 import { Settings } from './Settings'
 
 const LINKS = [
-  ['#/tableau', 'Tableau'],
+  ['#/tableau', 'Noter'],
   ['#/revenus', 'Revenus'],
-  ['#/depenses', 'Dépenses'],
   ['#/objectifs', 'Objectifs'],
   ['#/bilan', 'Bilan'],
-  ['#/revue', 'Revue'],
-  ['#/reglages', 'Réglages'],
 ] as const
 
 export function Shell({ hash }: { hash: string }) {
@@ -30,12 +27,13 @@ export function Shell({ hash }: { hash: string }) {
         <Brand href="#/tableau" />
         <nav className="side-nav" aria-label="Sections">
           {LINKS.map(([href, label]) => (
-            <a key={href} href={href} className={hash === href ? 'active' : ''} data-testid={`nav-${href.slice(2)}`}>
+            <a key={href} href={href} className={hash === href || (href === '#/tableau' && hash === '#/depenses') ? 'active' : ''} data-testid={`nav-${href.slice(2)}`}>
               {label}
             </a>
           ))}
         </nav>
-        <button type="button" className="text-btn light" onClick={lock}>Fermer le coffre</button>
+        <a className={hash === '#/reglages' ? 'side-quiet active' : 'side-quiet'} href="#/reglages" data-testid="nav-reglages">Réglages</a>
+        <button type="button" className="text-btn light" onClick={lock}>Fermer</button>
       </aside>
       <div className="main">
         <header className="main-top">
@@ -65,8 +63,8 @@ function Chevron({ direction }: { direction: 'left' | 'right' }) {
 function Page({ hash }: { hash: string }) {
   const pages: Record<string, ReactNode> = {
     '#/tableau': <Dashboard />,
-    '#/revenus': <Ledger mode="income" />,
-    '#/depenses': <Ledger mode="expense" />,
+    '#/revenus': <Ledger />,
+    '#/depenses': <Dashboard />,
     '#/objectifs': <Goals />,
     '#/bilan': <Report />,
     '#/revue': <Review />,

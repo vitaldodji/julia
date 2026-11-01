@@ -50,7 +50,7 @@ export function CreateScreen() {
           <button type="button" className="btn btn-ghost" onClick={() => downloadText('cauri-code-secours.txt', `Cauri\nCode de secours : ${recovery}\n\nCe code ouvre l’espace si le mot de passe est oublié.\n`)}>
             Télécharger
           </button>
-          <button type="button" className="btn btn-primary" onClick={() => { window.location.hash = '#/revenus' }}>
+          <button type="button" className="btn btn-primary" onClick={() => { window.location.hash = '#/tableau' }}>
             C’est noté, je commence
           </button>
         </div>

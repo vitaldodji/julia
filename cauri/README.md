@@ -1,6 +1,6 @@
 # Cauri
 
-Cahier personnel pour les revenus, les dépenses et les objectifs. Le bilan du mois dit ce qui est gagné, dépensé, mis de côté, et si les objectifs sont tenus.
+Cahier simple : noter une dépense tout de suite, les revenus, ce qui est mis de côté, et un bilan du mois.
 
 Le nom du compte et le mot de passe rouvrent le cahier chiffré sur un autre appareil. Les montants ne circulent pas en clair.
 
